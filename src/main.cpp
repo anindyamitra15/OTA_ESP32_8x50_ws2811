@@ -6,14 +6,39 @@
 #include <AsyncElegantOTA.h>
 #include <Button2.h>
 #include <FastLED.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include "Pins.h"
 #include "config.h"
 
 /*======Macros======*/
 // number of modes
-#define MODES 13
 #define BOOL_TEXT(a) a?"True":"False"
+#define CUR 2
 
+/*======Enum======*/
+/**
+ * @brief this enum shows the order how effects are executed
+ * Just put the unwanted effect on top and,
+ * assign it to -1
+ */
+enum modes
+{
+  FILL_IVORY = -1,
+  FILL_GOLD,
+  RAINBOWS,
+  HUE_SCROLL,
+  ARROW_YELLOW,
+  ARROW_COLOR,
+  BIT_SIN_AKM,
+  DUAL_SWORD,
+  PHASE_SINE,
+  PHASE_SINE_GOLD,
+  FIRESHIP,
+  BAR_GRAPH,
+  TWINKLERS,
+  MODES   //this gives the number of modes, keep it at the last
+};
 
 /*============Globals============*/
 bool otaInProgress = false;
@@ -57,10 +82,17 @@ CRGBPalette16 fires = fire;
 
 /*============Prototypes============*/
 void modeChange();
+void modeChange(int m);
 void click(Button2 &btn);
 void longpress(Button2 &btn);
 void mode(int i);
 //modes - non-blocking master loop functions
+void fill_all_strips(uint32_t colorcode);
+void fade_all_to_black_by(uint8_t amount);
+void common_color_to_linear_pixels(uint16_t pixel, uint32_t colorcode);
+void common_color_to_linear_pixels(uint16_t pixel, CHSV colorcode);
+void common_color_to_linear_pixels(uint16_t pixel, CRGB colorcode);
+void prep();
 void all_black();
 void all_gold();
 void hue_scroll();
@@ -78,6 +110,7 @@ void phase_sine_gold();
 
 
 void setup(){
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable   detector
   Serial.begin(115200);
   pinMode(SW, INPUT_PULLUP);
   FastLED.addLeds<WS2812, PIN1, ODR>(pix1, NUM);
@@ -93,12 +126,20 @@ void setup(){
   FastLED.setCorrection(Tungsten40W);
   FastLED.setBrightness(BRIGHTNESS);
 
+  //make the leds blank and enable brownout detect
+  FastLED.clear();
+  FastLED.show();
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 1); //enable brownout detector
   // Wifi setup
   manager.setTimeout(300);
   manager.autoConnect("Diwali Lights AKM");
-  delay(2000);
+  delay(500);
   Serial.print("Connected to ");
   Serial.println(WiFi.localIP());
+
+  // OTA server init
+  AsyncElegantOTA.begin(&server);
+  AsyncElegantOTA.preFotaRoutineCallback(prep);
   
   //alive response route
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -115,48 +156,39 @@ void setup(){
     request->send(200, "text/html", "<h1 style=\"text-align:center;\">Mode Changed to " + String(m_index) + "</h1>");
   });
 
+  //callback to reset mode index to 0
+  server.on("/reset", HTTP_GET, [](AsyncWebServerRequest *request) {
+    modeChange(0);
+    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Mode Reset to " + String(m_index) + "</h1>");
+  });
+
   // set mode using query parameter m = 0, 1, 2, etc.
-  server.on("/setMode", HTTP_GET, [](AsyncWebServerRequest *request) {
-
+  server.on("/setmode", HTTP_GET, [](AsyncWebServerRequest *request) {
     AsyncWebParameter* p = request->getParam(0);
-
     if (p->name() == "m"){
-
       String mode = p->value();
       int m = mode.toInt();
 
       // checking bound
       if(0 <= m && m < MODES){
-        m_index = m;
+        modeChange(m);
       }
       else{
-        request->send(200, "text/html", "<h1 style=\"text-align:center;\">Mode remains the same</h1>");
+        request->send(200, "text/html", "<h1 style=\"text-align:center;\">Mode remains "+ String(m_index)+", the same!</h1>");
         return;
       }
     }
-
-    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Mode Changed to " + String(m_index) + "</h1>");
-  });
-
-  //prepare for OTA, toggle to True
-  server.on("/prep", HTTP_GET, [](AsyncWebServerRequest *request){
-    otaInProgress ^= true; //enable/disable OTA/Lights'
-    all_black();
-    delay(10);
-    FastLED.show();
-    String changeText = BOOL_TEXT(!otaInProgress); //response text preparation
-    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Run mode Changed to: " + changeText + "</h1>");
+    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Mode changed to " + String(m_index) + "</h1>");
   });
 
   //toggle fixed/cycle around modes
   server.on("/cycle", HTTP_GET, [](AsyncWebServerRequest *request) {
     changeModes ^= true; //toggle mode
     String changeText = BOOL_TEXT(changeModes); //response text preparation
-    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Cycle mode Changed to: " + changeText + "</h1>");
+    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Cycle mode changed to: " + changeText + "</h1>");
   });
 
-  // OTA server init
-  AsyncElegantOTA.begin(&server);
+  
   // Start server
   server.begin();
   // multifunction button
@@ -187,59 +219,74 @@ void loop() {
 
 void mode(int i) {
   switch(i){
-    case 0:
+    case FILL_GOLD:
       all_gold();
       break;
-    case 1:
+    case FILL_IVORY:
       all_white();
       break;
-    case 2:
+    case RAINBOWS:
       rainbows();
       break;
-    case 3:
+    case HUE_SCROLL:
       hue_scroll();
       break;
-    case 4:
+    case ARROW_YELLOW:
       arrow_yellow();
       break;
-    case 5:
+    case ARROW_COLOR:
       arrow_color();
       break;
-    case 6:
+    case BIT_SIN_AKM:
       bitSinAKM();
       break;
-    case 7:
+    case DUAL_SWORD:
       dual_sword();
       break;
-    case 8:
+    case PHASE_SINE:
       phase_sine();
       break;
-    case 9:
+    case PHASE_SINE_GOLD:
       phase_sine_gold();
       break;
-    case 10:
+    case FIRESHIP:
       fireship();
       break;
-    case 11:
+    case BAR_GRAPH:
       bar_graph();
       break;
-    case 12:
+    case TWINKLERS:
       twinklers();
         break;
   }
 }
 
-
-void modeChange (){
-  m_index = ( m_index + 1 ) % MODES;
+void prep() {
+  otaInProgress = true; //enable OTA/disable Lights'
+  FastLED.clear();
+  delay(10);
+  FastLED.show();
 }
 
+//modeChange incrementer function
+void modeChange (){
+  m_index = ( m_index + 1 ) % MODES;
+  FastLED.setBrightness(BRIGHTNESS);
+}
+
+void modeChange(int m){
+  m_index = m % MODES;
+  FastLED.setBrightness(BRIGHTNESS);
+}
+
+//click or tap responder callback
 void click(Button2 &btn){
   modeChange();
   Serial.print("Mode changed to ");
   Serial.println(m_index);
 }
 
+//longpress responder callback
 void longpress(Button2 &btn){
   unsigned int time = btn.wasPressedFor();
   Serial.print(time);
@@ -252,8 +299,64 @@ void longpress(Button2 &btn){
   }
 }
 
+void fill_all_strips(uint32_t colorcode) {
+  fill_solid(pix1, NUM, colorcode);
+  fill_solid(pix2, NUM, colorcode);
+  fill_solid(pix3, NUM, colorcode);
+  fill_solid(pix4, NUM, colorcode);
+  fill_solid(pix5, NUM, colorcode);
+  fill_solid(pix6, NUM, colorcode);
+  fill_solid(pix7, NUM, colorcode);
+  fill_solid(pix8, NUM, colorcode);
+}
 
-/*=========Effects in master loop async mode=========*/
+void fade_all_to_black_by(uint8_t amount) {
+  fadeToBlackBy(pix1, NUM, amount);
+  fadeToBlackBy(pix2, NUM, amount);
+  fadeToBlackBy(pix3, NUM, amount);
+  fadeToBlackBy(pix4, NUM, amount);
+  fadeToBlackBy(pix5, NUM, amount);
+  fadeToBlackBy(pix6, NUM, amount);
+  fadeToBlackBy(pix7, NUM, amount);
+  fadeToBlackBy(pix8, NUM, amount);
+}
+
+
+//three separate definitions for different types of color being handled by fastled
+void common_color_to_linear_pixels(uint16_t pixel, uint32_t colorcode) {
+  pix1[pixel] = colorcode;
+  pix2[pixel] = colorcode;
+  pix3[pixel] = colorcode;
+  pix4[pixel] = colorcode;
+  pix5[pixel] = colorcode;
+  pix6[pixel] = colorcode;
+  pix7[pixel] = colorcode;
+  pix8[pixel] = colorcode;
+}
+
+void common_color_to_linear_pixels(uint16_t pixel, CHSV colorcode) {
+  pix1[pixel] = colorcode;
+  pix2[pixel] = colorcode;
+  pix3[pixel] = colorcode;
+  pix4[pixel] = colorcode;
+  pix5[pixel] = colorcode;
+  pix6[pixel] = colorcode;
+  pix7[pixel] = colorcode;
+  pix8[pixel] = colorcode;
+}
+
+void common_color_to_linear_pixels(uint16_t pixel, CRGB colorcode) {
+  pix1[pixel] = colorcode;
+  pix2[pixel] = colorcode;
+  pix3[pixel] = colorcode;
+  pix4[pixel] = colorcode;
+  pix5[pixel] = colorcode;
+  pix6[pixel] = colorcode;
+  pix7[pixel] = colorcode;
+  pix8[pixel] = colorcode;
+}
+
+/*=========Effects in master loop non-blocking mode=========*/
 
 void hue_scroll(){
   uint8_t hue = beat8(40, 0);
@@ -268,36 +371,23 @@ void hue_scroll(){
 }
 
 void all_gold() {
-  fill_solid(pix1, NUM, CRGB::Gold);
-  fill_solid(pix2, NUM, CRGB::Gold);
-  fill_solid(pix3, NUM, CRGB::Gold);
-  fill_solid(pix4, NUM, CRGB::Gold);
-  fill_solid(pix5, NUM, CRGB::Gold);
-  fill_solid(pix6, NUM, CRGB::Gold);
-  fill_solid(pix7, NUM, CRGB::Gold);
-  fill_solid(pix8, NUM, CRGB::Gold);
+  EVERY_N_SECONDS(CUR) {  
+    FastLED.setBrightness(BRIGHTNESS*0.8);
+    fill_all_strips(CRGB::Gold);
+  }
 }
 
-void all_black() {
-  fill_solid(pix1, NUM, CRGB::Black);
-  fill_solid(pix2, NUM, CRGB::Black);
-  fill_solid(pix3, NUM, CRGB::Black);
-  fill_solid(pix4, NUM, CRGB::Black);
-  fill_solid(pix5, NUM, CRGB::Black);
-  fill_solid(pix6, NUM, CRGB::Black);
-  fill_solid(pix7, NUM, CRGB::Black);
-  fill_solid(pix8, NUM, CRGB::Black);
+//just in case...
+void all_black() {  
+  fill_all_strips(CRGB::Black);
 }
+
 
 void all_white() {
-  fill_solid(pix1, NUM, CRGB::Ivory);
-  fill_solid(pix2, NUM, CRGB::Ivory);
-  fill_solid(pix3, NUM, CRGB::Ivory);
-  fill_solid(pix4, NUM, CRGB::Ivory);
-  fill_solid(pix5, NUM, CRGB::Ivory);
-  fill_solid(pix6, NUM, CRGB::Ivory);
-  fill_solid(pix7, NUM, CRGB::Ivory);
-  fill_solid(pix8, NUM, CRGB::Ivory);
+  EVERY_N_SECONDS(CUR) {
+    FastLED.setBrightness(BRIGHTNESS*0.8);
+    fill_all_strips(CRGB::Ivory);
+  }
 }
 
 void bitSinAKM(){
@@ -306,23 +396,9 @@ void bitSinAKM(){
   uint8_t sinBeat3 = beatsin8(sinBeat2, 0, 255, 0, 128); //hue ripple
   uint8_t sinBeat4 = beatsin8(15, 4, 10, 0, 0);  //chaser width ripple
   
-  pix1[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix2[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix3[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix4[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix5[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix6[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix7[sinBeat1] = CHSV(sinBeat3, 255, 255);
-  pix8[sinBeat1] = CHSV(sinBeat3, 255, 255);
+  common_color_to_linear_pixels(sinBeat1, CHSV(sinBeat3, 255, 255));
   
-  fadeToBlackBy(pix1, NUM, sinBeat4);
-  fadeToBlackBy(pix2, NUM, sinBeat4);
-  fadeToBlackBy(pix3, NUM, sinBeat4);
-  fadeToBlackBy(pix4, NUM, sinBeat4);
-  fadeToBlackBy(pix5, NUM, sinBeat4);
-  fadeToBlackBy(pix6, NUM, sinBeat4);
-  fadeToBlackBy(pix7, NUM, sinBeat4);
-  fadeToBlackBy(pix8, NUM, sinBeat4);
+  fade_all_to_black_by(sinBeat4);
 }
 
 void twinklers(){
@@ -336,14 +412,7 @@ void twinklers(){
     pix7[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
     pix8[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
   }
-  fadeToBlackBy(pix1, NUM, 8);
-  fadeToBlackBy(pix2, NUM, 8);
-  fadeToBlackBy(pix3, NUM, 8);
-  fadeToBlackBy(pix4, NUM, 8);
-  fadeToBlackBy(pix5, NUM, 8);
-  fadeToBlackBy(pix6, NUM, 8);
-  fadeToBlackBy(pix7, NUM, 8);
-  fadeToBlackBy(pix8, NUM, 8);
+  fade_all_to_black_by(8);
 }
 
 void arrow_yellow(){
@@ -361,14 +430,7 @@ void arrow_yellow(){
   pix7[map8(beat2, 0, NUM-1)] = CHSV(sinBeat3, 255, 255);
   pix8[map8(beat1, 0, NUM-1)] = CHSV(sinBeat3, 255, 255);
 
-  fadeToBlackBy(pix1, NUM, 6);
-  fadeToBlackBy(pix2, NUM, 6);
-  fadeToBlackBy(pix3, NUM, 6);
-  fadeToBlackBy(pix4, NUM, 6);
-  fadeToBlackBy(pix5, NUM, 6);
-  fadeToBlackBy(pix6, NUM, 6);
-  fadeToBlackBy(pix7, NUM, 6);
-  fadeToBlackBy(pix8, NUM, 6);
+  fade_all_to_black_by(6);
 }
 
 void arrow_color(){
@@ -387,35 +449,15 @@ void arrow_color(){
   pix7[map8(beat2, 0, NUM-1)] = CHSV(sinBeat3, 255, 255);
   pix8[map8(beat1, 0, NUM-1)] = CHSV(sinBeat3, 255, 255);
 
-  fadeToBlackBy(pix1, NUM, 7);
-  fadeToBlackBy(pix2, NUM, 7);
-  fadeToBlackBy(pix3, NUM, 7);
-  fadeToBlackBy(pix4, NUM, 7);
-  fadeToBlackBy(pix5, NUM, 7);
-  fadeToBlackBy(pix6, NUM, 7);
-  fadeToBlackBy(pix7, NUM, 7);
-  fadeToBlackBy(pix8, NUM, 7);
+  fade_all_to_black_by(7);
 }
 
 void bar_graph() {
   uint8_t beat = beatsin8(50, 0, NUM - 1, 0, 0);
-  pix1[beat] = CRGB::WhiteSmoke;
-  pix2[beat] = CRGB::WhiteSmoke;
-  pix3[beat] = CRGB::WhiteSmoke;
-  pix4[beat] = CRGB::WhiteSmoke;
-  pix5[beat] = CRGB::WhiteSmoke;
-  pix6[beat] = CRGB::WhiteSmoke;
-  pix7[beat] = CRGB::WhiteSmoke;
-  pix8[beat] = CRGB::WhiteSmoke;
 
-  fadeToBlackBy(pix1, NUM, 5);
-  fadeToBlackBy(pix2, NUM, 5);
-  fadeToBlackBy(pix3, NUM, 5);
-  fadeToBlackBy(pix4, NUM, 5);
-  fadeToBlackBy(pix5, NUM, 5);
-  fadeToBlackBy(pix6, NUM, 5);
-  fadeToBlackBy(pix7, NUM, 5);
-  fadeToBlackBy(pix8, NUM, 5);
+  common_color_to_linear_pixels(beat, CRGB::WhiteSmoke);
+
+  fade_all_to_black_by(5);
 }
 
 void fireship() {
@@ -448,32 +490,11 @@ void dual_sword() {
   uint8_t sin_hsv1 = beatsin8(10, 0, 255, 0, 0);
   uint8_t sin_hsv2 = beatsin8(10, 0, 255, 0, 127);  //180 deg
 
-  pix1[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix2[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix3[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix4[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix5[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix6[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix7[sin1] = CHSV(sin_hsv1, 255, 255);
-  pix8[sin1] = CHSV(sin_hsv1, 255, 255);
+  common_color_to_linear_pixels(sin1, CHSV(sin_hsv1, 255, 255));
 
-  pix1[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix2[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix3[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix4[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix5[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix6[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix7[sin2] = CHSV(sin_hsv2, 255, 255);
-  pix8[sin2] = CHSV(sin_hsv2, 255, 255);
+  common_color_to_linear_pixels(sin2, CHSV(sin_hsv2, 255, 255));
 
-  fadeToBlackBy(pix1, NUM, 15);
-  fadeToBlackBy(pix2, NUM, 15);
-  fadeToBlackBy(pix3, NUM, 15);
-  fadeToBlackBy(pix4, NUM, 15);
-  fadeToBlackBy(pix5, NUM, 15);
-  fadeToBlackBy(pix6, NUM, 15);
-  fadeToBlackBy(pix7, NUM, 15);
-  fadeToBlackBy(pix8, NUM, 15);
+  fade_all_to_black_by(15);
 }
 
 void phase_sine() {
@@ -495,14 +516,7 @@ void phase_sine() {
   pix7[sin_7] = CRGB::Ivory;
   pix8[sin_8] = CRGB::Ivory;
 
-  fadeToBlackBy(pix1, NUM, 30);
-  fadeToBlackBy(pix2, NUM, 30);
-  fadeToBlackBy(pix3, NUM, 30);
-  fadeToBlackBy(pix4, NUM, 30);
-  fadeToBlackBy(pix5, NUM, 30);
-  fadeToBlackBy(pix6, NUM, 30);
-  fadeToBlackBy(pix7, NUM, 30);
-  fadeToBlackBy(pix8, NUM, 30);
+  fade_all_to_black_by(30);
 }
 
 void phase_sine_gold() {
@@ -524,12 +538,5 @@ void phase_sine_gold() {
   pix7[sin_7] = CRGB::Gold;
   pix8[sin_8] = CRGB::Gold;
 
-  fadeToBlackBy(pix1, NUM, 30);
-  fadeToBlackBy(pix2, NUM, 30);
-  fadeToBlackBy(pix3, NUM, 30);
-  fadeToBlackBy(pix4, NUM, 30);
-  fadeToBlackBy(pix5, NUM, 30);
-  fadeToBlackBy(pix6, NUM, 30);
-  fadeToBlackBy(pix7, NUM, 30);
-  fadeToBlackBy(pix8, NUM, 30);
+  fade_all_to_black_by(30);
 }
