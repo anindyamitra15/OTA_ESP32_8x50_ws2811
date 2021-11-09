@@ -457,7 +457,7 @@ void bar_graph() {
 
   common_color_to_linear_pixels(beat, CRGB::WhiteSmoke);
 
-  fade_all_to_black_by(5);
+  fade_all_to_black_by(10);
 }
 
 void fireship() {
