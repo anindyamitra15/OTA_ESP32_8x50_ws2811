@@ -14,7 +14,8 @@
 /*======Macros======*/
 // number of modes
 #define BOOL_TEXT(a) a?"True":"False"
-#define CUR 2
+#define CUR 2 //s
+#define GRACE 5 //ms
 
 /*======Enum======*/
 /**
@@ -42,6 +43,7 @@ enum modes
 
 /*============Globals============*/
 bool otaInProgress = false;
+bool once = true;
 bool changeModes = true;
 uint8_t m_index = 0;
 AsyncWebServer server(80);
@@ -57,7 +59,6 @@ CRGB pix5[NUM];
 CRGB pix6[NUM];
 CRGB pix7[NUM];
 CRGB pix8[NUM];
-
 
 
 //Put your palettes here--------------
@@ -76,9 +77,7 @@ DEFINE_GRADIENT_PALETTE(fire) {
 
 };
 //--------------------------------------
-
-CRGBPalette16 starpal = stars;
-CRGBPalette16 fires = fire;
+CRGBPalette16 palette;
 
 /*============Prototypes============*/
 void modeChange();
@@ -129,14 +128,13 @@ void setup(){
   //make the leds blank and enable brownout detect
   FastLED.clear();
   FastLED.show();
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 1); //enable brownout detector
   // Wifi setup
   manager.setTimeout(300);
   manager.autoConnect("Diwali Lights AKM");
   delay(500);
   Serial.print("Connected to ");
   Serial.println(WiFi.localIP());
-
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 1); //enable brownout detector
   // OTA server init
   AsyncElegantOTA.begin(&server);
   AsyncElegantOTA.preFotaRoutineCallback(prep);
@@ -145,9 +143,16 @@ void setup(){
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     //response text preparation
     String cycleText = BOOL_TEXT(changeModes);
-    String otaText = BOOL_TEXT(otaInProgress);
+    String runText = BOOL_TEXT(!otaInProgress);
     request->send(200, "text/html", "<h1 style=\"text-align:center;\">Hi! I am ESP32 Diwali Lights.</h1><h3>Mode number: "
-    + String(m_index) + "</h3>" + "<h3>Cycle State: " + cycleText + "</h3><h3>OTA state: " + otaText + "</h3>");
+    + String(m_index) + "</h3>" + "<h3>Cycle State: " + cycleText + "</h3><h3>Lights state: " + runText + "</h3>");
+  });
+
+  //power control route
+  server.on("/op", HTTP_GET, [](AsyncWebServerRequest *request) {
+    otaInProgress ^= true;
+    all_black();
+    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Lights state: " + String(BOOL_TEXT(!otaInProgress)) + "</h1>");
   });
 
   //next mode change route
@@ -263,18 +268,18 @@ void mode(int i) {
 
 void prep() {
   otaInProgress = true; //enable OTA/disable Lights'
-  FastLED.clear();
-  delay(10);
-  FastLED.show();
+  all_black();
 }
 
 //modeChange incrementer function
 void modeChange (){
+  once = false;
   m_index = ( m_index + 1 ) % MODES;
   FastLED.setBrightness(BRIGHTNESS);
 }
 
 void modeChange(int m){
+  once = false;
   m_index = m % MODES;
   FastLED.setBrightness(BRIGHTNESS);
 }
@@ -379,7 +384,9 @@ void all_gold() {
 
 //just in case...
 void all_black() {  
-  fill_all_strips(CRGB::Black);
+  FastLED.clear();
+  delay(GRACE);
+  FastLED.show();
 }
 
 
@@ -402,15 +409,19 @@ void bitSinAKM(){
 }
 
 void twinklers(){
+  if (!once) {
+    once = true;  //flag set
+    palette = stars;  //palette change
+  }
   EVERY_N_MILLISECONDS(20) {
-    pix1[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix2[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix3[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix4[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix5[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix6[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix7[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
-    pix8[random(0, NUM-1)] = ColorFromPalette(starpal, random8(), 255, LINEARBLEND);
+    pix1[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix2[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix3[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix4[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix5[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix6[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix7[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
+    pix8[random(0, NUM-1)] = ColorFromPalette(palette, random8(), 255, LINEARBLEND);
   }
   fade_all_to_black_by(8);
 }
@@ -461,15 +472,19 @@ void bar_graph() {
 }
 
 void fireship() {
+  if (!once) {
+    once = true;  //flag set
+    palette = fire; //palette set
+  }
   uint8_t beat = beat8(20, 0);
-  fill_palette(pix1, NUM, beat     , 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix2, NUM, beat + 20, 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix3, NUM, beat + 40, 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix4, NUM, beat + 60, 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix5, NUM, beat + 60, 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix6, NUM, beat + 40, 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix7, NUM, beat + 20, 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
-  fill_palette(pix8, NUM, beat     , 256/NUM, fires, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix1, NUM, beat     , 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix2, NUM, beat + 20, 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix3, NUM, beat + 40, 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix4, NUM, beat + 60, 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix5, NUM, beat + 60, 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix6, NUM, beat + 40, 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix7, NUM, beat + 20, 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
+  fill_palette(pix8, NUM, beat     , 256/NUM, palette, BRIGHTNESS, LINEARBLEND);
 }
 
 void rainbows() {
