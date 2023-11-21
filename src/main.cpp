@@ -33,6 +33,7 @@ enum modes
   ARROW_COLOR,
   BIT_SIN_AKM,
   DUAL_SWORD,
+  DUAL_SWORD_CROSSPLANE,
   PHASE_SINE,
   PHASE_SINE_GOLD,
   FIRESHIP,
@@ -95,8 +96,8 @@ void prep();
 void all_black();
 void all_gold();
 void hue_scroll();
-void arrow_color();
 void arrow_yellow();
+void arrow_color();
 void twinklers();
 void bitSinAKM();
 void bar_graph();
@@ -104,11 +105,12 @@ void fireship();
 void rainbows();
 void all_white();
 void dual_sword();
+void dual_sword_crossplane();
 void phase_sine();
 void phase_sine_gold();
 
 
-void setup(){
+void setup(){ 
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable   detector
   Serial.begin(115200);
   pinMode(SW, INPUT_PULLUP);
@@ -120,14 +122,22 @@ void setup(){
   FastLED.addLeds<TYPE, PIN6, ODR>(pix6, NUM);
   FastLED.addLeds<TYPE, PIN7, ODR>(pix7, NUM);
   FastLED.addLeds<TYPE, PIN8, ODR>(pix8, NUM);
+  //make the leds blank and enable brownout detect
+  FastLED.clear();
+  pix1[0] = CRGB::White;
+  pix2[0] = CRGB::Red;
+  pix3[0] = CRGB::Blue;
+  pix4[0] = CRGB::Green;
+  pix5[0] = CRGB::Violet;
+  pix6[0] = CRGB::Cyan;
+  pix7[0] = CRGB::Yellow;
+  pix8[0] = CRGB::Crimson;
+  FastLED.show();
 
 
   FastLED.setCorrection(Tungsten40W);
   FastLED.setBrightness(BRIGHTNESS);
 
-  //make the leds blank and enable brownout detect
-  FastLED.clear();
-  FastLED.show();
   // Wifi setup
   manager.setTimeout(300);
   manager.autoConnect("Diwali Lights AKM");
@@ -137,7 +147,7 @@ void setup(){
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 1); //enable brownout detector
   // OTA server init
   AsyncElegantOTA.begin(&server);
-  AsyncElegantOTA.preFotaRoutineCallback(prep);
+  AsyncElegantOTA.onOTAStart(prep);
   
   //alive response route
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -247,6 +257,9 @@ void mode(int i) {
       break;
     case DUAL_SWORD:
       dual_sword();
+      break;
+    case DUAL_SWORD_CROSSPLANE:
+      dual_sword_crossplane();
       break;
     case PHASE_SINE:
       phase_sine();
@@ -502,6 +515,19 @@ void rainbows() {
 void dual_sword() {
   uint8_t sin1 = beatsin8(40, 0, NUM-1, 0, 0);
   uint8_t sin2 = beatsin8(40, 0, NUM-1, 0, 127);  //180 deg
+  uint8_t sin_hsv1 = beatsin8(10, 0, 255, 0, 0);
+  uint8_t sin_hsv2 = beatsin8(10, 0, 255, 0, 127);  //180 deg
+
+  common_color_to_linear_pixels(sin1, CHSV(sin_hsv1, 255, 255));
+
+  common_color_to_linear_pixels(sin2, CHSV(sin_hsv2, 255, 255));
+
+  fade_all_to_black_by(15);
+}
+
+void dual_sword_crossplane() {
+  uint8_t sin1 = beatsin8(40, 0, NUM-1, 0, 0);
+  uint8_t sin2 = beatsin8(40, 0, NUM-1, 0, 191);  //270 deg
   uint8_t sin_hsv1 = beatsin8(10, 0, 255, 0, 0);
   uint8_t sin_hsv2 = beatsin8(10, 0, 255, 0, 127);  //180 deg
 
