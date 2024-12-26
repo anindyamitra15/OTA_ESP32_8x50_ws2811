@@ -154,8 +154,15 @@ void setup(){
     //response text preparation
     String cycleText = BOOL_TEXT(changeModes);
     String runText = BOOL_TEXT(!otaInProgress);
-    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Hi! I am ESP32 Diwali Lights.</h1><h3>Mode number: "
-    + String(m_index) + "</h3>" + "<h3>Cycle State: " + cycleText + "</h3><h3>Lights state: " + runText + "</h3>");
+    request->send(200, "text/html", "<h1 style=\"text-align:center;\">Hi! I am ESP32 Diwali Lights</h1><h3>Mode number: "
+    + String(m_index) + " out of " + String(MODES) + " modes</h3>" 
+    + "<h3>Cycle State: " + cycleText + "</h3><h3>Lights state: " + runText 
+    + "</h3><h3>Other routes:</h3>"
+    + "<a href=\"/op\">/op</a><br/>"
+    + "<a href=\"/next\">/next</a><br/>"
+    + "<a href=\"/reset\">/reset</a><br/>"
+    + "<a href=\"/setmode?m=2\">/setmode?m=2</a><br/>"
+    + "<a href=\"/cycle\">/cycle</a>");
   });
 
   //power control route
